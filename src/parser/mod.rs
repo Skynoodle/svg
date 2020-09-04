@@ -16,7 +16,7 @@ pub use self::reader::Reader;
 /// A parser.
 pub struct Parser<'l> {
     #[allow(dead_code)]
-    content: Cow<'l, str>,
+    content: &'l str,
     reader: Reader<'l>,
 }
 
@@ -52,8 +52,27 @@ impl<'l> Parser<'l> {
     where
         T: Into<Cow<'l, str>>,
     {
-        let content = content.into();
-        let reader = unsafe { ::std::mem::transmute(Reader::new(&*content)) };
+        // Parser's API always allows retrieving references into the content
+        // with lifetime 'l.
+        //
+        // This is fine for the Cow::Borrowed case, as it already gives us
+        // a reference of lifetime 'l.
+        //
+        // The `Cow::Owned` case, however, has no such guarantee.
+        // Of course, if we have a `Cow::Owned`, we can _make_ it live as
+        // long as we want - but crucially Self (and its fields) does not
+        // necessarily last for 'l (and, in fact, is not _permitted_ to
+        // outlive it due to the bound imposed by `Cow::Borrowed`'s
+        // reference).
+        //
+        // Lacking another owner of sufficient lifetime, we're left with
+        // no choice but to _leak_ ownership of the String, obtaining a
+        // 'static lifetime.
+        let content = match content.into() {
+            Cow::Borrowed(content) => content,
+            Cow::Owned(content) => Box::leak(content.into_boxed_str())
+        };
+        let reader = Reader::new(&*content);
         Parser { content, reader }
     }
 
